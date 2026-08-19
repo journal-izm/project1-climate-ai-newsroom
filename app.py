@@ -7,6 +7,9 @@ from src.weather_service import (
     collect_weather,
     save_weather,
 )
+from src.article_service import (
+    generate_article,
+)
 
 st.set_page_config(
     page_title="Climate AI Newsroom",
@@ -165,4 +168,34 @@ if os.path.exists(
             ascending=False,
         ),
         use_container_width=True,
+    )
+
+# -----------------------------------
+# AI 기사 생성
+# -----------------------------------
+if st.button(
+    "AI 기사 생성"
+):
+
+    article = generate_article(
+        row
+    )
+
+    os.makedirs(
+        "articles",
+        exist_ok=True,
+    )
+
+    with open(
+        "articles/news_article.md",
+        "w",
+        encoding="utf-8",
+    ) as f:
+
+        f.write(
+            article
+        )
+
+    st.markdown(
+        article
     )
