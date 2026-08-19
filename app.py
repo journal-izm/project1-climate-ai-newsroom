@@ -145,17 +145,14 @@ else:
         "아직 수집된 기상 데이터가 없습니다."
     )
 
-
 # -----------------------------------
 # 수집 이력
 # -----------------------------------
-
 if os.path.exists(
     "data/weather_history.csv"
 ):
 
     st.divider()
-
     st.subheader(
         "기상 데이터 변화"
     )
@@ -164,15 +161,25 @@ if os.path.exists(
         "data/weather_history.csv"
     )
 
+    # 문자열 → datetime 변환
     history_df["collected_at"] = pd.to_datetime(
-        history_df["collected_at"]
+        history_df["collected_at"],
+        errors="coerce",
     )
 
-    history_df = history_df.sort_values(
-        "collected_at"
+    # -----------------------------------
+    # 그래프용: 오래된 순 → 최신순
+    # -----------------------------------
+    chart_history_df = (
+        history_df
+        .sort_values(
+            "collected_at",
+            ascending=True,
+        )
+        .copy()
     )
 
-    chart_df = history_df.set_index(
+    chart_df = chart_history_df.set_index(
         "collected_at"
     )[
         [
@@ -185,14 +192,28 @@ if os.path.exists(
         chart_df
     )
 
+    # -----------------------------------
+    # 표 출력용: 최신순 → 오래된 순
+    # -----------------------------------
+    table_history_df = (
+        history_df
+        .sort_values(
+            "collected_at",
+            ascending=False,
+        )
+        .reset_index(drop=True)
+        .copy()
+    )
+
     st.subheader(
         "수집 이력"
     )
 
     st.dataframe(
-        history_df,
+        table_history_df,
         width="stretch",
     )
+    
 # -----------------------------------
 # AI 기사 생성
 # -----------------------------------
@@ -275,41 +296,28 @@ evidence = st.session_state.get(
 if evidence is not None:
 
     st.divider()
-
-    st.subheader("RAG 검색 근거")
-
-    st.write(
-        "검색 결과 개수:",
-        len(evidence)
-    )
+    st.subheader("실시간 관측 데이터 근거")
 
     if len(evidence) == 0:
-
-        st.warning(
-            "검색된 근거가 없습니다."
-        )
+        st.warning("검증 가능한 관측 데이터가 없습니다.")
 
     else:
+        item = evidence[0]
 
-        for i, item in enumerate(
-            evidence,
-            start=1,
+        st.success(
+            f"{row['city']} 최신 관측 데이터 확인 완료"
+        )
+
+        with st.expander(
+            "최신 관측 근거 보기",
+            expanded=True,
         ):
+            st.text(item["content"])
 
-            with st.expander(
-                f"근거 {i}",
-                expanded=True,
-            ):
-
-                st.text(
-                    item["content"]
-                )
-
-                st.write("메타데이터")
-
-                st.json(
-                    item["metadata"]
-                )
+            st.caption(
+                f"출처: {item['metadata']['source']} | "
+                f"수집시각: {item['metadata']['collected_at']}"
+            )
 
 # -----------------------------------
 # RAG 팩트체크 결과 - LLM 판정
