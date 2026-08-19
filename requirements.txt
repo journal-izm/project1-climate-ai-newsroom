@@ -6,4 +6,6 @@ requests
 python-dotenv
 openai
 langchain
+langchain-openai
+langchain-community
 faiss-cpu
