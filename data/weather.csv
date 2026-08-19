@@ -1,2 +1,2 @@
-﻿city,temperature,feels_like,humidity,pressure,wind_speed,weather
-Seoul,24.76,25.9,100,1014,0.51,온흐림
+﻿collected_at,city,temperature,feels_like,humidity,pressure,wind_speed,weather
+2026-08-19 23:08:02,Seoul,24.76,25.9,100,1014,0.51,온흐림
