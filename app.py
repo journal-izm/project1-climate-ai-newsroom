@@ -10,6 +10,27 @@ from src.weather_service import (
 from src.article_service import (
     generate_article,
 )
+from src.rag_service import (
+    build_vector_db,
+)
+from src.factcheck_service import (
+    fact_check_article,
+    save_fact_check,
+)
+
+st.set_page_config(
+    page_title="Climate AI Newsroom",
+    layout="wide",
+)
+
+# -----------------------------------
+# Session State 초기화
+# -----------------------------------
+if "article" not in st.session_state:
+    st.session_state.article = None
+
+if "factcheck_evidence" not in st.session_state:
+    st.session_state.factcheck_evidence = None
 
 st.set_page_config(
     page_title="Climate AI Newsroom",
@@ -41,25 +62,31 @@ city = st.selectbox(
     ],
 )
 
+
 if st.button(
     "최신 기상 데이터 수집",
     type="primary",
 ):
 
     try:
-
         weather = collect_weather(city)
 
         save_weather(weather)
 
+        # 최신 history 기준으로 Vector DB 재생성
+        build_vector_db()
+
+        # st.session_state.factcheck_result = None  # LLM 판정 결과 초기화
+        st.session_state.factcheck_evidence = None
+
         st.success(
-            "최신 기상 데이터를 수집했습니다."
+            "최신 기상 데이터를 수집하고 "
+            "Vector DB를 갱신했습니다."
         )
 
         st.rerun()
 
     except Exception as e:
-
         st.error(
             f"데이터 수집 오류: {e}"
         )
@@ -163,23 +190,20 @@ if os.path.exists(
     )
 
     st.dataframe(
-        history_df.sort_values(
-            "collected_at",
-            ascending=False,
-        ),
-        use_container_width=True,
+        history_df,
+        width="stretch",
     )
-
 # -----------------------------------
 # AI 기사 생성
 # -----------------------------------
-if st.button(
-    "AI 기사 생성"
-):
+if st.button("AI 기사 생성"):
 
-    article = generate_article(
-        row
-    )
+    article = generate_article(row)
+
+    st.session_state.article = article
+
+    # st.session_state.factcheck_result = None # LLM 판정 결과 초기화
+    st.session_state.factcheck_evidence = None
 
     os.makedirs(
         "articles",
@@ -191,11 +215,173 @@ if st.button(
         "w",
         encoding="utf-8",
     ) as f:
+        f.write(article)
+if st.session_state.article:
 
-        f.write(
-            article
-        )
+    st.divider()
+
+    st.subheader("AI 생성 기사")
 
     st.markdown(
-        article
+        st.session_state.article
     )
+
+# -----------------------------------
+# RAG 팩트체크 실행
+# -----------------------------------
+if st.button("RAG 팩트체크 실행"):
+
+    article = st.session_state.article
+
+    if not article:
+        st.warning("먼저 AI 기사를 생성하세요.")
+
+    else:
+
+        target_city = str(row["city"]).strip()
+
+        st.write(
+            "팩트체크 대상 도시:",
+            target_city
+        )
+
+        evidence = fact_check_article(
+            article,
+            city=row["city"],
+        )
+
+        st.write(
+            "RAG 검색 결과:",
+            len(evidence),
+            "건"
+        )
+
+        st.session_state.factcheck_evidence = evidence
+
+        save_fact_check(
+            article,
+            evidence,
+        )
+
+        st.success("팩트체크 완료")
+
+# -----------------------------------
+# RAG 팩트체크 결과
+# -----------------------------------
+evidence = st.session_state.get(
+    "factcheck_evidence"
+)
+
+if evidence is not None:
+
+    st.divider()
+
+    st.subheader("RAG 검색 근거")
+
+    st.write(
+        "검색 결과 개수:",
+        len(evidence)
+    )
+
+    if len(evidence) == 0:
+
+        st.warning(
+            "검색된 근거가 없습니다."
+        )
+
+    else:
+
+        for i, item in enumerate(
+            evidence,
+            start=1,
+        ):
+
+            with st.expander(
+                f"근거 {i}",
+                expanded=True,
+            ):
+
+                st.text(
+                    item["content"]
+                )
+
+                st.write("메타데이터")
+
+                st.json(
+                    item["metadata"]
+                )
+
+# -----------------------------------
+# RAG 팩트체크 결과 - LLM 판정
+# -----------------------------------
+result = st.session_state.get(
+    "factcheck_result"
+)
+if result:
+    st.divider()
+
+    st.subheader(
+        "팩트체크 결과"
+    )
+
+    status = result.get(
+        "status",
+        "근거 부족"
+    )
+
+    if status == "사실":
+        st.success(
+            f"판정: {status}"
+        )
+
+    elif status == "불일치":
+        st.error(
+            f"판정: {status}"
+        )
+
+    else:
+        st.warning(
+            f"판정: {status}"
+        )
+
+    st.write(
+        result.get(
+            "reason",
+            ""
+        )
+    )
+
+    mismatches = result.get(
+        "mismatches",
+        []
+    )
+
+    if mismatches:
+
+        st.subheader(
+            "불일치 항목"
+        )
+
+        for i, item in enumerate(
+            mismatches,
+            start=1,
+        ):
+
+            with st.expander(
+                f"불일치 {i}"
+            ):
+
+                st.write(
+                    "기사 주장:",
+                    item["claim"],
+                )
+
+                st.write(
+                    "실제 데이터:",
+                    item["evidence"],
+                )
+
+                st.write(
+                    "설명:",
+                    item["explanation"],
+                )

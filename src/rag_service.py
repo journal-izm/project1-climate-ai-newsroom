@@ -86,11 +86,11 @@ def build_vector_db():
     return len(documents)
 
 
-def search_weather(query, k=3):
-    """
-    생성한 FAISS DB에서
-    질문과 관련된 기상 데이터를 검색한다.
-    """
+def search_weather(
+    query,
+    city=None,
+    k=3,
+):
 
     embeddings = OpenAIEmbeddings(
         model="text-embedding-3-small"
@@ -102,9 +102,79 @@ def search_weather(query, k=3):
         allow_dangerous_deserialization=True,
     )
 
+    # 우선 넉넉하게 검색
     results = vector_store.similarity_search(
         query,
-        k=k,
+        k=20,
     )
 
-    return results
+    # 도시가 지정되면 Python에서 직접 필터
+    if city:
+
+        target_city = str(city).strip().lower()
+
+        results = [
+            doc
+            for doc in results
+            if str(
+                doc.metadata.get(
+                    "city",
+                    ""
+                )
+            ).strip().lower()
+            == target_city
+        ]
+
+    if results:
+
+        results = sorted(
+            results,
+            key=lambda doc: pd.to_datetime(
+                doc.metadata.get(
+                    "collected_at"
+                )
+            ),
+            reverse=True,
+        )
+    # 최종 반환 개수 제한
+    return results[:k]
+
+def get_latest_weather(city):
+    """
+    weather_history.csv에서
+    지정 도시의 가장 최근 관측값 1건을 반환한다.
+    """
+
+    history_path = "data/weather_history.csv"
+
+    if not os.path.exists(history_path):
+        return None
+
+    df = pd.read_csv(history_path)
+
+    df["city"] = (
+        df["city"]
+        .astype(str)
+        .str.strip()
+        .str.lower()
+    )
+
+    target_city = str(city).strip().lower()
+
+    city_df = df[
+        df["city"] == target_city
+    ].copy()
+
+    if city_df.empty:
+        return None
+
+    city_df["collected_at"] = pd.to_datetime(
+        city_df["collected_at"]
+    )
+
+    city_df = city_df.sort_values(
+        "collected_at",
+        ascending=False,
+    )
+
+    return city_df.iloc[0]

@@ -47,3 +47,21 @@ def generate_article(weather):
     )
 
     return response.choices[0].message.content
+
+
+
+def save_article(
+    article,
+    path="articles/news_article.md",
+):
+    os.makedirs(
+        "articles",
+        exist_ok=True,
+    )
+
+    with open(
+        path,
+        "w",
+        encoding="utf-8",
+    ) as f:
+        f.write(article)
