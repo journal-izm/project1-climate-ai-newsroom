@@ -15,7 +15,7 @@ from src.rag_service import (
 )
 from src.factcheck_service import (
     fact_check_article,
-    save_fact_check,
+    # save_fact_check, 
 )
 
 st.set_page_config(
@@ -29,8 +29,13 @@ st.set_page_config(
 if "article" not in st.session_state:
     st.session_state.article = None
 
+# RAG 검색 근거 초기화
 if "factcheck_evidence" not in st.session_state:
     st.session_state.factcheck_evidence = None
+# LLM 판정 결과 초기화
+if "factcheck_result" not in st.session_state:
+    st.session_state.factcheck_result = None
+
 
 st.set_page_config(
     page_title="Climate AI Newsroom",
@@ -76,8 +81,8 @@ if st.button(
         # 최신 history 기준으로 Vector DB 재생성
         build_vector_db()
 
-        # st.session_state.factcheck_result = None  # LLM 판정 결과 초기화
-        st.session_state.factcheck_evidence = None
+        # st.session_state.factcheck_evidence = None
+        st.session_state.factcheck_result = None  # LLM 판정 결과 초기화
 
         st.success(
             "최신 기상 데이터를 수집하고 "
@@ -213,7 +218,7 @@ if os.path.exists(
         table_history_df,
         width="stretch",
     )
-    
+
 # -----------------------------------
 # AI 기사 생성
 # -----------------------------------
@@ -223,8 +228,8 @@ if st.button("AI 기사 생성"):
 
     st.session_state.article = article
 
-    # st.session_state.factcheck_result = None # LLM 판정 결과 초기화
-    st.session_state.factcheck_evidence = None
+    # st.session_state.factcheck_evidence = None 
+    st.session_state.factcheck_result = None # LLM 판정 결과 초기화
 
     os.makedirs(
         "articles",
@@ -279,10 +284,10 @@ if st.button("RAG 팩트체크 실행"):
 
         st.session_state.factcheck_evidence = evidence
 
-        save_fact_check(
-            article,
-            evidence,
-        )
+        # save_fact_check(
+        #     article,
+        #     evidence,
+        # )
 
         st.success("팩트체크 완료")
 
@@ -322,15 +327,31 @@ if evidence is not None:
 # -----------------------------------
 # RAG 팩트체크 결과 - LLM 판정
 # -----------------------------------
+if st.button("LLM 팩트체크 실행"):
+
+    article = st.session_state.article
+
+    if not article:
+        st.warning("먼저 AI 기사를 생성하세요.")
+
+    else:
+        result = fact_check_article(
+            article=article,
+            city=row["city"],
+        )
+
+        st.session_state.factcheck_result = result
+
+        st.success("팩트체크 완료")
+
 result = st.session_state.get(
     "factcheck_result"
 )
-if result:
-    st.divider()
 
-    st.subheader(
-        "팩트체크 결과"
-    )
+if result:
+
+    st.divider()
+    st.subheader("LLM 팩트체크 결과")
 
     status = result.get(
         "status",
@@ -338,19 +359,13 @@ if result:
     )
 
     if status == "사실":
-        st.success(
-            f"판정: {status}"
-        )
+        st.success(f"판정: {status}")
 
     elif status == "불일치":
-        st.error(
-            f"판정: {status}"
-        )
+        st.error(f"판정: {status}")
 
     else:
-        st.warning(
-            f"판정: {status}"
-        )
+        st.warning(f"판정: {status}")
 
     st.write(
         result.get(
@@ -366,9 +381,7 @@ if result:
 
     if mismatches:
 
-        st.subheader(
-            "불일치 항목"
-        )
+        st.subheader("세부 판정")
 
         for i, item in enumerate(
             mismatches,
@@ -376,20 +389,56 @@ if result:
         ):
 
             with st.expander(
-                f"불일치 {i}"
+                f"검증 항목 {i}",
+                expanded=True,
             ):
 
                 st.write(
-                    "기사 주장:",
-                    item["claim"],
+                    "**기사 주장**"
+                )
+                st.write(
+                    item.get(
+                        "claim",
+                        ""
+                    )
                 )
 
                 st.write(
-                    "실제 데이터:",
-                    item["evidence"],
+                    "**실제 근거**"
+                )
+                st.write(
+                    item.get(
+                        "evidence",
+                        ""
+                    )
                 )
 
                 st.write(
-                    "설명:",
-                    item["explanation"],
+                    "**판정 설명**"
                 )
+                st.write(
+                    item.get(
+                        "explanation",
+                        ""
+                    )
+                )
+
+    evidence = result.get(
+        "evidence"
+    )
+
+    if evidence:
+
+        st.subheader(
+            "실제 관측 데이터"
+        )
+
+        st.code(
+            evidence["content"]
+        )
+
+        st.caption(
+            f"출처: {evidence['metadata']['source']} | "
+            f"도시: {evidence['metadata']['city']} | "
+            f"수집시각: {evidence['metadata']['collected_at']}"
+        )
