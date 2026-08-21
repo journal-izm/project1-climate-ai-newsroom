@@ -45,10 +45,10 @@ with st.sidebar:
     st.header("실행 설정")
     mode = st.radio("데이터 모드", ["demo", "live"], index=0 if settings.demo_mode else 1, format_func=lambda value: "교육용 데모" if value == "demo" else "실시간 API")
     city = st.selectbox("지역", list(SUPPORTED_CITIES), format_func=lambda value: SUPPORTED_CITIES[value])
-    effective_settings = Settings(app_mode=mode, openweather_api_key=settings.openweather_api_key, kma_service_key=settings.kma_service_key, kma_alert_api_url=settings.kma_alert_api_url, openai_api_key=settings.openai_api_key, chat_model=settings.chat_model, embedding_model=settings.embedding_model)
+    effective_settings = Settings(app_mode=mode, openweather_api_key=settings.openweather_api_key, kma_api_hub_key=settings.kma_api_hub_key, kma_alert_api_url=settings.kma_alert_api_url, openai_api_key=settings.openai_api_key, chat_model=settings.chat_model, embedding_model=settings.embedding_model)
     if mode == "live" and not settings.openweather_api_key:
         st.warning("OpenWeather 키가 없어 현재 날씨는 데모 데이터를 사용합니다.")
-    if mode == "live" and not settings.kma_service_key:
+    if mode == "live" and not settings.kma_api_hub_key:
         st.warning("기상청 키가 없어 특보는 데모 데이터를 사용합니다.")
     st.caption(f"AI 기사/검토: {'OpenAI' if settings.openai_api_key else '데모 기사·규칙 검증'}")
 
@@ -66,7 +66,7 @@ with tab_collect:
         except Exception as exc:
             errors.append(f"현재 날씨 수집 실패: {exc}")
         try:
-            if mode == "live" and settings.kma_service_key:
+            if mode == "live" and settings.kma_api_hub_key:
                 alerts = collect_kma_alerts(city, effective_settings)
             else:
                 alerts = load_demo_alerts(city)

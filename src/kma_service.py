@@ -37,15 +37,15 @@ def _classify_alert(text: str) -> tuple[str, str]:
 
 def collect_kma_alerts(city: str, settings: Settings | None = None) -> list[AlertRecord]:
     settings = settings or Settings()
-    if not settings.kma_service_key:
-        raise ValueError("KMA_SERVICE_KEY가 설정되지 않았습니다.")
+    if not settings.kma_api_hub_key:
+        raise ValueError("KMA_API_HUB_KEY가 설정되지 않았습니다.")
     if city not in SUPPORTED_CITIES:
         raise ValueError(f"지원하지 않는 지역입니다: {city}")
 
     end = now_seoul()
     start = end - timedelta(days=2)
     params = {
-        "serviceKey": settings.kma_service_key,
+        "authKey": settings.kma_api_hub_key,
         "pageNo": 1,
         "numOfRows": 100,
         "dataType": "JSON",

@@ -32,7 +32,7 @@ SUPPORTED_CITIES = {
 class Settings:
     app_mode: str = os.getenv("APP_MODE", "demo").strip().lower()
     openweather_api_key: str = os.getenv("OPENWEATHER_API_KEY", "").strip()
-    kma_service_key: str = os.getenv("KMA_SERVICE_KEY", "").strip()
+    kma_api_hub_key: str = os.getenv("KMA_API_HUB_KEY", "").strip()
     kma_alert_api_url: str = os.getenv(
         "KMA_ALERT_API_URL",
         "https://apihub.kma.go.kr/api/typ01/url/wrn_now_data.php",

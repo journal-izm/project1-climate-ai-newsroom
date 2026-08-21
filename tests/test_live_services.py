@@ -30,7 +30,7 @@ def test_openweather_live_response(monkeypatch):
 def test_kma_alert_response(monkeypatch):
     payload = {"response": {"body": {"items": {"item": [{"title": "서울 폭염주의보 발표", "tmFc": "202608201100", "t6": "서울", "t7": "온열질환에 유의"}]}}}}
     monkeypatch.setattr("src.kma_service.requests.get", lambda *args, **kwargs: FakeResponse(payload))
-    alerts = collect_kma_alerts("Seoul", Settings(app_mode="live", kma_service_key="test"))
+    alerts = collect_kma_alerts("Seoul", Settings(app_mode="live", kma_api_hub_key="test"))
     assert len(alerts) == 1
     assert alerts[0].alert_type == "폭염주의보"
     assert alerts[0].issued_at == "2026-08-20T11:00:00+09:00"
