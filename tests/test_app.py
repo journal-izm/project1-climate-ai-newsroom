@@ -16,6 +16,8 @@ def test_demo_user_flow_reaches_final_approval(monkeypatch, tmp_path):
     _button(app, "기상 데이터 수집").click()
     app.run()
     assert not app.exception
+    assert any("현재 날씨와 기상특보 수집·저장" in item.value for item in app.success)
+    assert any(item.value == "특보 수집 이력 — 최신순" for item in app.subheader)
     _button(app, "AI 기사 초안 생성").click()
     app.run()
     assert not app.exception

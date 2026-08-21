@@ -49,7 +49,7 @@ with st.sidebar:
     if mode == "live" and not settings.openweather_api_key:
         st.warning("OpenWeather 키가 없어 현재 날씨는 데모 데이터를 사용합니다.")
     if mode == "live" and not settings.kma_api_hub_key:
-        st.warning("기상청 키가 없어 특보는 데모 데이터를 사용합니다.")
+        st.warning("기상청 API 허브 키가 없어 특보는 데모 데이터를 사용합니다.")
     st.caption(f"AI 기사/검토: {'OpenAI' if settings.openai_api_key else '데모 기사·규칙 검증'}")
 
 tab_collect, tab_rag, tab_news, tab_export = st.tabs(["① 수집·시각화", "② RAG 근거", "③ 기사·팩트체크·승인", "④ 내보내기"])
@@ -59,25 +59,42 @@ with tab_collect:
     if st.button("기상 데이터 수집", type="primary"):
         reset_news_state()
         errors: list[str] = []
+        weather_collected = False
+        alerts_collected = False
+        weather_mode = ""
+        alerts_mode = ""
         try:
             weather = collect_weather(city, effective_settings)
             save_weather(weather)
             st.session_state.weather = weather.to_dict()
+            weather_collected = True
+            weather_mode = weather.mode
         except Exception as exc:
             errors.append(f"현재 날씨 수집 실패: {exc}")
         try:
             if mode == "live" and settings.kma_api_hub_key:
                 alerts = collect_kma_alerts(city, effective_settings)
+                alerts_mode = "live"
             else:
                 alerts = load_demo_alerts(city)
+                alerts_mode = "demo"
             save_alerts(alerts)
             st.session_state.alerts = [item.to_dict() for item in alerts]
+            alerts_collected = True
         except Exception as exc:
             errors.append(f"특보 수집 실패: {exc}")
         if errors:
             st.warning(" / ".join(errors))
-        if st.session_state.weather:
-            st.success("수집·저장을 완료했습니다. 각 단계는 독립 처리되어 일부 API 실패가 기존 데이터를 손상시키지 않습니다.")
+        if weather_collected and alerts_collected:
+            st.success("현재 날씨와 기상특보 수집·저장을 완료했습니다.")
+        elif weather_collected:
+            st.info("현재 날씨만 수집·저장했습니다. 특보 수집 결과를 확인하세요.")
+        elif alerts_collected:
+            st.info("기상특보만 수집·저장했습니다. 현재 날씨 수집 결과를 확인하세요.")
+        if alerts_collected and alerts_mode == "live" and not alerts:
+            st.info(f"{SUPPORTED_CITIES[city]}에 현재 발효 중인 기상특보가 없습니다.")
+        if weather_collected and alerts_collected and "demo" in (weather_mode, alerts_mode):
+            st.caption("일부 데이터는 API 키가 없어 교육용 데모 자료를 사용했습니다.")
 
     weather = st.session_state.weather
     if weather:
@@ -90,6 +107,8 @@ with tab_collect:
         st.caption(f"출처: {weather['source']} | 수집시각: {weather['collected_at']} | 모드: {weather['mode']}")
         for item in st.session_state.alerts:
             st.warning(f"{item['region']} · {item['alert_type']}({item['level']}) — {item['content']}")
+        if not st.session_state.alerts:
+            st.info("현재 선택 지역에 표시할 기상특보가 없습니다.")
     else:
         st.info("지역을 선택하고 기상 데이터를 수집하세요.")
 
@@ -101,6 +120,11 @@ with tab_collect:
         chart["collected_at"] = pd.to_datetime(chart["collected_at"])
         chart = chart.sort_values("collected_at").set_index("collected_at")
         st.line_chart(chart[["temperature", "feels_like"]])
+
+    alert_history = load_alert_history(descending=True)
+    if not alert_history.empty:
+        st.subheader("특보 수집 이력 — 최신순")
+        st.dataframe(alert_history, use_container_width=True, hide_index=True)
 
 with tab_rag:
     st.subheader("기상·특보 근거 검색")
