@@ -1,180 +1,73 @@
-import os
+from __future__ import annotations
+
+import re
+from typing import Any
 
 import pandas as pd
-from dotenv import load_dotenv
 
-from langchain_core.documents import Document
-from langchain_openai import OpenAIEmbeddings
-from langchain_community.vectorstores import FAISS
+from src.config import SAMPLE_DIR, Settings, VECTOR_DB_DIR
+from src.data_service import load_alert_history, load_weather_history
 
 
-load_dotenv()
+def _document(content: str, source: str, **metadata: Any) -> dict[str, Any]:
+    return {"content": content.strip(), "metadata": {"source": source, **metadata}}
 
-VECTOR_DB_PATH = "vector_db/weather"
 
-
-def create_weather_documents():
-    """
-    weather_history.csv의 각 행을
-    LangChain Document 객체로 변환한다.
-    """
-
-    history_path = "data/weather_history.csv"
-
-    if not os.path.exists(history_path):
-        raise FileNotFoundError(
-            "data/weather_history.csv 파일이 없습니다."
+def create_weather_documents() -> list[dict[str, Any]]:
+    documents: list[dict[str, Any]] = []
+    weather = load_weather_history(descending=True)
+    for _, row in weather.iterrows():
+        content = (
+            f"수집 시각: {row['collected_at']}\n지역: {row.get('city_ko', row['city'])}\n"
+            f"기온: {row['temperature']}℃\n체감온도: {row['feels_like']}℃\n"
+            f"습도: {row['humidity']}%\n풍속: {row['wind_speed']}m/s\n날씨: {row['weather']}"
         )
+        documents.append(_document(content, str(row.get("source", "기상 데이터")), city=row["city"], collected_at=row["collected_at"], kind="observation"))
 
-    df = pd.read_csv(history_path)
+    alerts = load_alert_history(descending=True)
+    for _, row in alerts.iterrows():
+        content = f"특보 발표 시각: {row['issued_at']}\n지역: {row['region']}\n특보: {row['alert_type']} ({row['level']})\n내용: {row['content']}"
+        documents.append(_document(content, str(row.get("source", "기상청")), region=row["region"], collected_at=row["issued_at"], kind="alert"))
 
-    documents = []
-
-    for _, row in df.iterrows():
-
-        content = f"""
-수집 시각: {row['collected_at']}
-도시: {row['city']}
-현재 기온: {row['temperature']}℃
-체감 온도: {row['feels_like']}℃
-습도: {row['humidity']}%
-기압: {row['pressure']} hPa
-풍속: {row['wind_speed']} m/s
-날씨 상태: {row['weather']}
-""".strip()
-
-        document = Document(
-            page_content=content,
-            metadata={
-                "source": "OpenWeather API",
-                "city": row["city"],
-                "collected_at": row["collected_at"],
-            },
-        )
-
-        documents.append(document)
-
+    for filename, kind in (("weather_terms.csv", "term"), ("disaster_guidelines.csv", "guideline")):
+        path = SAMPLE_DIR / filename
+        if not path.exists():
+            continue
+        df = pd.read_csv(path, encoding="utf-8-sig")
+        for _, row in df.iterrows():
+            content = f"기상 용어: {row['term']}\n설명: {row['description']}" if kind == "term" else f"특보 유형: {row['alert_type']}\n재난 대응요령: {row['guideline']}"
+            documents.append(_document(content, str(row["source"]), kind=kind))
     return documents
 
 
-def build_vector_db():
-    """
-    기상 데이터를 임베딩하여
-    FAISS Vector DB를 생성한다.
-    """
+def _tokens(text: str) -> set[str]:
+    return {token for token in re.findall(r"[0-9A-Za-z가-힣]+", text.casefold()) if len(token) > 1}
 
+
+def search_weather(query: str, city: str | None = None, k: int = 5) -> list[dict[str, Any]]:
+    query_tokens = _tokens(query)
+    scored: list[tuple[int, str, dict[str, Any]]] = []
+    for doc in create_weather_documents():
+        metadata = doc["metadata"]
+        city_text = f"{metadata.get('city', '')} {metadata.get('region', '')} {doc['content']}"
+        if city and city.casefold() not in city_text.casefold() and metadata.get("kind") not in {"term", "guideline"}:
+            continue
+        scored.append((len(query_tokens & _tokens(doc["content"])), str(metadata.get("collected_at", "")), doc))
+    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    matched = [item[2] for item in scored if item[0] > 0]
+    return (matched or [item[2] for item in scored])[:k]
+
+
+def build_vector_db(settings: Settings | None = None) -> dict[str, Any]:
+    settings = settings or Settings()
     documents = create_weather_documents()
-
-    embeddings = OpenAIEmbeddings(
-        model="text-embedding-3-small"
-    )
-
-    vector_store = FAISS.from_documents(
-        documents,
-        embeddings,
-    )
-
-    os.makedirs(
-        "vector_db",
-        exist_ok=True,
-    )
-
-    vector_store.save_local(
-        VECTOR_DB_PATH
-    )
-
-    return len(documents)
-
-
-def search_weather(
-    query,
-    city=None,
-    k=3,
-):
-
-    embeddings = OpenAIEmbeddings(
-        model="text-embedding-3-small"
-    )
-
-    vector_store = FAISS.load_local(
-        VECTOR_DB_PATH,
-        embeddings,
-        allow_dangerous_deserialization=True,
-    )
-
-    # 우선 넉넉하게 검색
-    results = vector_store.similarity_search(
-        query,
-        k=20,
-    )
-
-    # 도시가 지정되면 Python에서 직접 필터
-    if city:
-
-        target_city = str(city).strip().lower()
-
-        results = [
-            doc
-            for doc in results
-            if str(
-                doc.metadata.get(
-                    "city",
-                    ""
-                )
-            ).strip().lower()
-            == target_city
-        ]
-
-    if results:
-
-        results = sorted(
-            results,
-            key=lambda doc: pd.to_datetime(
-                doc.metadata.get(
-                    "collected_at"
-                )
-            ),
-            reverse=True,
-        )
-    # 최종 반환 개수 제한
-    return results[:k]
-
-def get_latest_weather(city):
-    """
-    weather_history.csv에서
-    지정 도시의 가장 최근 관측값 1건을 반환한다.
-    """
-
-    history_path = "data/weather_history.csv"
-
-    if not os.path.exists(history_path):
-        return None
-
-    df = pd.read_csv(history_path)
-
-    df["city"] = (
-        df["city"]
-        .astype(str)
-        .str.strip()
-        .str.lower()
-    )
-
-    target_city = str(city).strip().lower()
-
-    city_df = df[
-        df["city"] == target_city
-    ].copy()
-
-    if city_df.empty:
-        return None
-
-    city_df["collected_at"] = pd.to_datetime(
-        city_df["collected_at"]
-    )
-
-    city_df = city_df.sort_values(
-        "collected_at",
-        ascending=False,
-    )
-
-    return city_df.iloc[0]
+    if not settings.openai_api_key or not documents:
+        return {"backend": "keyword", "count": len(documents), "path": None}
+    from langchain_community.vectorstores import FAISS
+    from langchain_core.documents import Document
+    from langchain_openai import OpenAIEmbeddings
+    lc_documents = [Document(page_content=d["content"], metadata=d["metadata"]) for d in documents]
+    vector_store = FAISS.from_documents(lc_documents, OpenAIEmbeddings(model=settings.embedding_model, api_key=settings.openai_api_key))
+    VECTOR_DB_DIR.mkdir(parents=True, exist_ok=True)
+    vector_store.save_local(str(VECTOR_DB_DIR))
+    return {"backend": "faiss", "count": len(documents), "path": str(VECTOR_DB_DIR)}

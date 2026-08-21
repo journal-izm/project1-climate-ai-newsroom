@@ -1,121 +1,26 @@
+from __future__ import annotations
+
 import json
-import os
+from typing import Any
 
-from dotenv import load_dotenv
-from openai import OpenAI
-
-from src.rag_service import get_latest_weather
-
-load_dotenv()
-
-client = OpenAI(
-    api_key=os.getenv("OPENAI_API_KEY")
-)
+from src.config import Settings
 
 
-def fact_check_article(
-    article: str,
-    city: str,
-):
-    """
-    AI 기사와 최신 실제 기상 데이터를 비교하여
-    사실 / 불일치 / 근거 부족으로 판정한다.
-    """
-
-    row = get_latest_weather(city)
-
-    if row is None:
-        return {
-            "status": "근거 부족",
-            "reason": f"{city}의 최신 관측 데이터가 없습니다.",
-            "mismatches": [],
-            "evidence": None,
-        }
-
-    evidence_text = f"""
-수집 시각: {row['collected_at']}
-도시: {city}
-현재 기온: {row['temperature']}℃
-체감 온도: {row['feels_like']}℃
-습도: {row['humidity']}%
-기압: {row['pressure']} hPa
-풍속: {row['wind_speed']} m/s
-날씨 상태: {row['weather']}
-""".strip()
-
-    prompt = f"""
-너는 데이터 저널리즘 팩트체커다.
-
-아래 AI 생성 기사와 실제 기상 관측 데이터를 비교하여
-기사에 포함된 사실 주장이 실제 데이터와 일치하는지 판정하라.
-
-[AI 생성 기사]
-{article}
-
-[실제 기상 관측 데이터]
-{evidence_text}
-
-판정 기준은 다음과 같다.
-
-1. 사실
-- 기사에 포함된 수치 및 날씨 상태가 실제 데이터와 일치함
-
-2. 불일치
-- 기사에 실제 데이터와 다른 수치 또는 사실이 포함됨
-
-3. 근거 부족
-- 기사에 언급된 내용이 제공된 실제 데이터만으로 검증할 수 없음
-
-중요 규칙:
-- 기사에 실제 데이터에 없는 예보, 건강 조언, 미래 전망 등이 있으면
-  해당 내용은 근거 부족으로 판단할 수 있다.
-- 숫자가 실제 값과 다르면 불일치로 판정한다.
-- 전체 기사 판정은 가장 중요한 오류를 기준으로 판단한다.
-
-반드시 아래 JSON 형식으로만 응답하라.
-
-{{
-  "status": "사실 | 불일치 | 근거 부족",
-  "reason": "전체 판정 이유",
-  "mismatches": [
-    {{
-      "claim": "기사의 주장",
-      "evidence": "실제 관측 데이터",
-      "explanation": "판정 설명"
-    }}
-  ]
-}}
-"""
-
-    response = client.chat.completions.create(
-        model="gpt-4.1-mini",
-        messages=[
-            {
-                "role": "system",
-                "content": "너는 사실 검증만 수행하는 데이터 저널리즘 팩트체커다.",
-            },
-            {
-                "role": "user",
-                "content": prompt,
-            },
-        ],
-        response_format={
-            "type": "json_object"
-        },
-        temperature=0,
-    )
-
-    result = json.loads(
-        response.choices[0].message.content
-    )
-
-    result["evidence"] = {
-        "content": evidence_text,
-        "metadata": {
-            "source": "OpenWeather API",
-            "city": city,
-            "collected_at": str(row["collected_at"]),
-        },
-    }
-
+def llm_review_article(article: str, evidence: list[dict[str, Any]], settings: Settings | None = None) -> dict[str, Any]:
+    settings = settings or Settings()
+    if not settings.openai_api_key:
+        return {"status": "검토 생략", "reason": "OPENAI_API_KEY가 없어 LLM 문맥 검토를 생략했습니다.", "issues": [], "mode": "demo"}
+    from openai import OpenAI
+    client = OpenAI(api_key=settings.openai_api_key)
+    prompt = f"""기사와 근거를 비교해 문맥, 과장, 근거 없는 전망, 누락, 편향을 검토하라.
+수치·날짜·지역·특보 여부는 별도 규칙 엔진이 판정한다. JSON 형식으로 status(적합|수정 필요|근거 부족), reason, issues 배열을 반환하라.
+[기사]\n{article}\n[근거]\n{evidence}"""
+    response = client.chat.completions.create(model=settings.chat_model, messages=[{"role": "system", "content": "너는 저널리즘 품질 검토자다."}, {"role": "user", "content": prompt}], response_format={"type": "json_object"}, temperature=0)
+    result = json.loads(response.choices[0].message.content or "{}")
+    result["mode"] = "openai"
     return result
+
+
+def combine_checks(rule_result: dict[str, Any], llm_result: dict[str, Any]) -> dict[str, Any]:
+    ok = rule_result.get("status") == "사실" and llm_result.get("status") in {"적합", "검토 생략"}
+    return {"status": "사람 검토 대기" if ok else "사람 검토 필요", "reason": "자동 검증을 통과했습니다. 사람의 최종 검토와 승인이 필요합니다." if ok else "규칙 또는 LLM 검토에서 문제를 발견해 자동 승인하지 않습니다.", "rule": rule_result, "llm": llm_result}

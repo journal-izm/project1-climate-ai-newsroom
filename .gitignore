@@ -1,5 +1,13 @@
 venv/
+.venv/
 .env
 __pycache__/
 .ipynb_checkpoints/
 *.pyc
+.pytest_cache/
+vector_db/weather/
+data/processed/*.csv
+data/processed/*.json
+data/powerbi/*.csv
+reports/fact_check_*.md
+articles/approved_*.md

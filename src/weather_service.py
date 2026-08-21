@@ -1,26 +1,22 @@
-import os
-from datetime import datetime
-
-import pandas as pd
 import requests
-from dotenv import load_dotenv
-
-load_dotenv()
-
-API_KEY = os.getenv("OPENWEATHER_API_KEY")
+from src.config import SUPPORTED_CITIES, Settings
+from src.demo_service import load_demo_weather
+from src.models import WeatherRecord
+from src.time_utils import iso_seoul
 
 URL = "https://api.openweathermap.org/data/2.5/weather"
 
 
-def collect_weather(city="Seoul"):
-    if not API_KEY:
-        raise ValueError(
-            "OPENWEATHER_API_KEY가 설정되지 않았습니다."
-        )
+def collect_weather(city: str = "Seoul", settings: Settings | None = None) -> WeatherRecord:
+    settings = settings or Settings()
+    if city not in SUPPORTED_CITIES:
+        raise ValueError(f"지원하지 않는 지역입니다: {city}")
+    if settings.demo_mode or not settings.openweather_api_key:
+        return load_demo_weather(city)
 
     params = {
         "q": city,
-        "appid": API_KEY,
+        "appid": settings.openweather_api_key,
         "units": "metric",
         "lang": "kr",
     }
@@ -35,65 +31,17 @@ def collect_weather(city="Seoul"):
 
     data = response.json()
 
-    weather = {
-        "collected_at": datetime.now().strftime(
-            "%Y-%m-%d %H:%M:%S"
-        ),
-        "city": data["name"],
-        "temperature": data["main"]["temp"],
-        "feels_like": data["main"]["feels_like"],
-        "humidity": data["main"]["humidity"],
-        "pressure": data["main"]["pressure"],
-        "wind_speed": data["wind"]["speed"],
-        "weather": data["weather"][0]["description"],
-    }
-
-    return weather
-
-
-def save_weather(weather):
-    os.makedirs(
-        "data",
-        exist_ok=True,
+    return WeatherRecord(
+        collected_at=iso_seoul(),
+        city=city,
+        city_ko=SUPPORTED_CITIES[city],
+        temperature=float(data["main"]["temp"]),
+        feels_like=float(data["main"]["feels_like"]),
+        humidity=int(data["main"]["humidity"]),
+        pressure=int(data["main"]["pressure"]),
+        wind_speed=float(data["wind"]["speed"]),
+        weather=str(data["weather"][0]["description"]),
+        source="OpenWeather API",
+        source_url=URL,
+        mode="live",
     )
-
-    new_df = pd.DataFrame(
-        [weather]
-    )
-
-    current_path = "data/weather.csv"
-    history_path = "data/weather_history.csv"
-
-    # 최신 데이터 저장
-    new_df.to_csv(
-        current_path,
-        index=False,
-        encoding="utf-8-sig",
-    )
-
-    # 이력 데이터 누적
-    if os.path.exists(history_path):
-
-        history_df = pd.read_csv(
-            history_path
-        )
-
-        history_df = pd.concat(
-            [
-                history_df,
-                new_df,
-            ],
-            ignore_index=True,
-        )
-
-    else:
-
-        history_df = new_df
-
-    history_df.to_csv(
-        history_path,
-        index=False,
-        encoding="utf-8-sig",
-    )
-
-    return history_df

@@ -1,0 +1,8 @@
+city,temperature,feels_like,humidity,pressure,wind_speed,weather
+Seoul,29.2,31.1,72,1008,2.4,구름 많음
+Busan,27.4,29.5,78,1009,3.1,흐림
+Daegu,31.0,33.2,65,1007,1.8,맑음
+Incheon,28.1,30.0,75,1008,3.8,구름 많음
+Gwangju,30.3,32.6,69,1007,2.0,소나기
+Daejeon,29.8,31.9,70,1008,1.7,구름 많음
+Ulsan,28.7,30.6,73,1009,2.9,흐림
