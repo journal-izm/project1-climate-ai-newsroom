@@ -35,7 +35,7 @@ class Settings:
     kma_service_key: str = os.getenv("KMA_SERVICE_KEY", "").strip()
     kma_alert_api_url: str = os.getenv(
         "KMA_ALERT_API_URL",
-        "https://apihub.kma.go.kr/api/typ01/url/wrn_met_data.php",
+        "https://apihub.kma.go.kr/api/typ01/url/wrn_now_data.php",
     ).strip()
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "").strip()
     chat_model: str = os.getenv("OPENAI_CHAT_MODEL", "gpt-4.1-mini").strip()

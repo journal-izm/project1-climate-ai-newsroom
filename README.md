@@ -33,6 +33,7 @@ streamlit run app.py
 APP_MODE=live
 OPENWEATHER_API_KEY=발급받은_키
 KMA_SERVICE_KEY=공공데이터포털_서비스키
+KMA_API_HUB_KEY=기상청_인증키
 OPENAI_API_KEY=선택_키
 ```
 
