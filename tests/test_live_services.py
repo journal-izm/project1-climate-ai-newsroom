@@ -6,6 +6,7 @@ from src.weather_service import collect_weather
 class FakeResponse:
     def __init__(self, payload):
         self.payload = payload
+        self.content = payload.encode("utf-8") if isinstance(payload, str) else b""
 
     def raise_for_status(self):
         return None
@@ -28,9 +29,27 @@ def test_openweather_live_response(monkeypatch):
 
 
 def test_kma_alert_response(monkeypatch):
-    payload = {"response": {"body": {"items": {"item": [{"title": "서울 폭염주의보 발표", "tmFc": "202608201100", "t6": "서울", "t7": "온열질환에 유의"}]}}}}
+    payload = """#START7777
+# REG_UP REG_UP_KO REG_ID REG_KO TM_FC TM_EF WRN LVL CMD
+L1010000 서울특별시 L1010100 서울동북권 202608201100 202608201200 H 2 1
+#7777END
+"""
     monkeypatch.setattr("src.kma_service.requests.get", lambda *args, **kwargs: FakeResponse(payload))
     alerts = collect_kma_alerts("Seoul", Settings(app_mode="live", kma_api_hub_key="test"))
     assert len(alerts) == 1
     assert alerts[0].alert_type == "폭염주의보"
     assert alerts[0].issued_at == "2026-08-20T11:00:00+09:00"
+
+
+def test_kma_alert_filters_other_city_and_released_alert(monkeypatch):
+    payload = """#START7777
+L1010000 서울특별시 L1010100 서울동북권 202608201100 202608201200 H 2 3
+L1020000 부산광역시 L1020100 부산광역시 202608201300 202608201400 R 3 1
+#7777END
+"""
+    monkeypatch.setattr("src.kma_service.requests.get", lambda *args, **kwargs: FakeResponse(payload))
+    settings = Settings(app_mode="live", kma_api_hub_key="test")
+    assert collect_kma_alerts("Seoul", settings) == []
+    alerts = collect_kma_alerts("Busan", settings)
+    assert len(alerts) == 1
+    assert alerts[0].alert_type == "호우경보"

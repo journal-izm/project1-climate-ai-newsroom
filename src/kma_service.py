@@ -1,38 +1,110 @@
 from __future__ import annotations
 
-from datetime import timedelta
-from typing import Any
+import re
 
 import requests
 
 from src.config import SUPPORTED_CITIES, Settings
 from src.models import AlertRecord
-from src.time_utils import compact_kma_time, iso_seoul, now_seoul
+from src.time_utils import iso_seoul
 
 
-def _items_from_response(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    body = payload.get("response", {}).get("body", {})
-    items = body.get("items", {})
-    if isinstance(items, dict):
-        items = items.get("item", [])
-    if isinstance(items, dict):
-        return [items]
-    return items if isinstance(items, list) else []
+WRN_NAMES = {
+    "W": "강풍",
+    "R": "호우",
+    "C": "한파",
+    "D": "건조",
+    "O": "폭풍해일",
+    "N": "지진해일",
+    "V": "풍랑",
+    "T": "태풍",
+    "S": "대설",
+    "Y": "황사",
+    "H": "폭염",
+    "F": "안개",
+    "K": "열대야",
+}
+LEVEL_NAMES = {"1": "예비특보", "2": "주의보", "3": "경보"}
+COMMAND_NAMES = {
+    "1": "발표",
+    "2": "대치",
+    "3": "해제",
+    "4": "대치해제",
+    "5": "연장",
+    "6": "변경",
+    "7": "변경해제",
+}
+RELEASE_COMMANDS = {"3", "4", "7"}
+
+_ROW_PATTERN = re.compile(
+    r"^\s*(?P<reg_up>\S+)\s+"
+    r"(?P<reg_up_ko>.+?)\s+"
+    r"(?P<reg_id>\S+)\s+"
+    r"(?P<reg_ko>.+?)\s+"
+    r"(?P<tm_fc>\d{12})\s+"
+    r"(?P<tm_ef>\d{12})\s+"
+    r"(?P<wrn>\S+)\s+"
+    r"(?P<lvl>\S+)\s+"
+    r"(?P<cmd>\S+)\s*$"
+)
 
 
-def _first(item: dict[str, Any], *keys: str, default: str = "") -> str:
-    for key in keys:
-        value = item.get(key)
-        if value not in (None, ""):
-            return str(value)
-    return default
+def _decode_response(response: requests.Response) -> str:
+    content = getattr(response, "content", None)
+    if isinstance(content, bytes):
+        for encoding in ("utf-8", "cp949", "euc-kr"):
+            try:
+                return content.decode(encoding)
+            except UnicodeDecodeError:
+                continue
+        return content.decode("utf-8", errors="replace")
+    return str(getattr(response, "text", ""))
 
 
-def _classify_alert(text: str) -> tuple[str, str]:
-    types = ("폭염", "호우", "강풍", "풍랑", "대설", "한파", "태풍", "건조", "황사")
-    alert_type = next((name for name in types if name in text), "기상특보")
-    level = "경보" if "경보" in text else "주의보" if "주의보" in text else "정보"
-    return f"{alert_type}{level}" if alert_type != "기상특보" and level != "정보" else alert_type, level
+def _parse_row(line: str) -> dict[str, str] | None:
+    if "\t" in line:
+        values = [value.strip() for value in line.split("\t") if value.strip()]
+        if len(values) == 9:
+            keys = (
+                "reg_up",
+                "reg_up_ko",
+                "reg_id",
+                "reg_ko",
+                "tm_fc",
+                "tm_ef",
+                "wrn",
+                "lvl",
+                "cmd",
+            )
+            return dict(zip(keys, values))
+    match = _ROW_PATTERN.match(line)
+    return match.groupdict() if match else None
+
+
+def parse_kma_alert_response(text: str) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for raw_line in text.replace("\ufeff", "").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        row = _parse_row(line)
+        if row:
+            rows.append(row)
+
+    lowered = text.lower()
+    error_markers = ("error", "invalid", "인증키 오류", "권한이 없습니다")
+    if not rows and any(marker in lowered for marker in error_markers):
+        raise RuntimeError("기상청 API 허브가 오류 응답을 반환했습니다. 인증키와 활용승인을 확인하세요.")
+    return rows
+
+
+def _matches_city(row: dict[str, str], city: str) -> bool:
+    city_ko = SUPPORTED_CITIES[city]
+    upper_region = row.get("reg_up_ko", "")
+    detail_region = row.get("reg_ko", "")
+    if upper_region:
+        return city_ko in upper_region
+    return city_ko in detail_region
 
 
 def collect_kma_alerts(city: str, settings: Settings | None = None) -> list[AlertRecord]:
@@ -42,42 +114,42 @@ def collect_kma_alerts(city: str, settings: Settings | None = None) -> list[Aler
     if city not in SUPPORTED_CITIES:
         raise ValueError(f"지원하지 않는 지역입니다: {city}")
 
-    end = now_seoul()
-    start = end - timedelta(days=2)
     params = {
+        "fe": "f",
+        "tm": "",
+        "disp": "0",
+        "help": "0",
         "authKey": settings.kma_api_hub_key,
-        "pageNo": 1,
-        "numOfRows": 100,
-        "dataType": "JSON",
-        "fromTmFc": compact_kma_time(start),
-        "toTmFc": compact_kma_time(end),
-        "stnId": "108",
     }
     response = requests.get(settings.kma_alert_api_url, params=params, timeout=15)
     response.raise_for_status()
-    items = _items_from_response(response.json())
-    region_name = SUPPORTED_CITIES[city]
+    rows = parse_kma_alert_response(_decode_response(response))
     results: list[AlertRecord] = []
-    for item in items:
-        region = _first(item, "t6", "regName", "areaName", "stnName", default="전국")
-        content = _first(item, "t7", "wrnCont", "content", "title")
-        if region_name not in f"{region} {content}" and "전국" not in f"{region} {content}":
+    for row in rows:
+        if not _matches_city(row, city) or row["cmd"] in RELEASE_COMMANDS:
             continue
-        issued = _first(item, "tmFc", "issuedAt", default=iso_seoul())
-        effective = _first(item, "tmEf", "effectiveAt", default=issued)
-        title = _first(item, "title")
-        classified_type, classified_level = _classify_alert(f"{title} {content}")
+        region = row["reg_ko"]
+        weather_name = WRN_NAMES.get(row["wrn"], "기상특보")
+        level = LEVEL_NAMES.get(row["lvl"], "정보")
+        command = COMMAND_NAMES.get(row["cmd"], "현황")
+        alert_type = f"{weather_name}{level}" if level != "정보" else weather_name
+        issued_at = iso_seoul(row["tm_fc"])
+        effective_at = iso_seoul(row["tm_ef"])
+        content = (
+            f"{region} {alert_type} {command}. "
+            f"발표 {issued_at}, 발효 {effective_at}."
+        )
         results.append(
             AlertRecord(
                 collected_at=iso_seoul(),
                 region=region,
-                alert_type=_first(item, "t1", "wrnType", "alertType", default=classified_type),
-                level=_first(item, "t2", "wrnLevel", "level", default=classified_level),
-                issued_at=iso_seoul(issued),
-                effective_at=iso_seoul(effective),
-                content=content or title or "기상청 특보가 발표되었습니다.",
+                alert_type=alert_type,
+                level=level,
+                issued_at=issued_at,
+                effective_at=effective_at,
+                content=content,
                 mode="live",
                 source_url=settings.kma_alert_api_url,
             )
         )
-    return results
+    return sorted(results, key=lambda item: item.issued_at, reverse=True)
